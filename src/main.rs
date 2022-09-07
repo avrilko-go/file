@@ -1,35 +1,28 @@
-use std::{path::Path, time::Duration};
-
+use std::path::Path;
+use std::time::Duration;
 use notify::{RecursiveMode};
 use notify_debouncer_mini::new_debouncer;
+use tokio::sync::mpsc;
 
-/// Example for debouncer
-fn main() {
-    // emit some events by changing a file
-    std::thread::spawn(|| {
-        let path = Path::new("test.txt");
-        let _ = std::fs::remove_file(&path);
-        loop {
-            std::fs::write(&path, b"Lorem ipsum").unwrap();
-            std::thread::sleep(Duration::from_millis(250));
-        }
-    });
+#[tokio::main]
+async fn main() {
 
-    // setup debouncer
-    let (tx, rx) = std::sync::mpsc::channel();
-
-    // No specific tickrate, max debounce time 2 seconds
-    let mut debouncer = new_debouncer(Duration::from_secs(1), None, tx).unwrap();
+    let (tx, mut rx) = mpsc::channel(1);
+    let mut debouncer = new_debouncer(Duration::from_secs(1), None, move |res| {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            tx.send(res).await.unwrap();
+        });
+    }).unwrap();
 
     debouncer
         .watcher()
-        .watch(Path::new("/home/avrilko/rust"), RecursiveMode::Recursive)
+        .watch(Path::new("."), RecursiveMode::Recursive)
         .unwrap();
 
-    // print all events, non returning
-    for events in rx {
-        for e in events {
-            println!("{:?}", e);
+    while let Some(res) = rx.recv().await {
+        match res {
+            Ok(event) => println!("changed: {:?}", event),
+            Err(e) => println!("watch error: {:?}", e),
         }
     }
 }
